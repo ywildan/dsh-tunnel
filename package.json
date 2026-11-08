@@ -24,7 +24,8 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "node --test test/*.test.mjs",
-    "check": "npm run test && node scripts/check-build.mjs"
+    "check": "npm run test && node scripts/check-build.mjs",
+    "pretest": "node scripts/build.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

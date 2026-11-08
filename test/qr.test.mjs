@@ -13,7 +13,16 @@ const require = createRequire(import.meta.url)
  * @returns the module exports.
  */
 function loadEncoder() {
-  const source = readFileSync(new URL('../.build/client/qrcode.js', import.meta.url), 'utf8')
+  const path = new URL('../.build/client/qrcode.js', import.meta.url)
+  let source
+  try {
+    source = readFileSync(path, 'utf8')
+  } catch (cause) {
+    // `.build/` is gitignored, so a fresh clone has no compiled encoder. npm
+    // runs `pretest` first, but say so plainly instead of surfacing ENOENT if
+    // this file is ever run directly.
+    throw new Error(`compiled encoder missing at ${path.pathname}; run \`npm run build\` first`, { cause })
+  }
   const module = { exports: {} }
   vm.runInNewContext(source, { module, exports: module.exports, require, console }, { filename: 'qrcode.js' })
   return module.exports
