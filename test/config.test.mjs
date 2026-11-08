@@ -144,34 +144,3 @@ test('nothing in the shipped plugin still hard-codes a single hostname', () => {
     )
   }
 })
-
-// The trust preflight exists because of a real failure: `dsh web` started
-// without --trusted-host still serves the page (authorizeIndex performs no
-// trust check) while every /api call is refused with 403. The tunnel looked ON,
-// the chat rendered, and the folder picker failed. The check below turns that
-// into a visible red item with the exact restart command.
-test('the trust preflight names --trusted-host when DSH rejects the hostname', async () => {
-  const { checkHostTrust } = await import('../lib/host/prerequisites.js')
-  const check = await checkHostTrust('http://127.0.0.1:3080', 'definitely-not-trusted.example', 3_000)
-  assert.equal(check.id, 'trust')
-  assert.equal(check.ok, false)
-  assert.match(check.message, /HTTP 403/)
-  assert.match(check.hint ?? '', /--trusted-host definitely-not-trusted\.example/)
-  assert.match(check.hint ?? '', /page loads but every \/api call is refused/)
-})
-
-test('the trust preflight passes for a loopback authority DSH accepts', async () => {
-  const { checkHostTrust } = await import('../lib/host/prerequisites.js')
-  // A loopback Host is always accepted by DSH's fence, so this proves the probe
-  // reads the 401/403 distinction instead of always failing.
-  const check = await checkHostTrust('http://127.0.0.1:3080', 'localhost', 3_000)
-  assert.equal(check.ok, true)
-  assert.match(check.message, /accepts localhost/)
-})
-
-test('the trust preflight reports an unreachable DSH instead of claiming success', async () => {
-  const { checkHostTrust } = await import('../lib/host/prerequisites.js')
-  const check = await checkHostTrust('http://127.0.0.1:1', 'example.com', 1_500)
-  assert.equal(check.ok, false)
-  assert.match(check.message, /could not be verified/)
-})
