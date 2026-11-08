@@ -41,7 +41,9 @@ test('apply registers three tools, the bridge, and never auto-starts', async () 
 
   try {
     const { apply: applyHost } = await import('../lib/index.js')
-    applyHost(context)
+    // Explicit hostname: an unconfigured row adopts config.yml instead, which is
+    // covered by config.test.mjs.
+    applyHost(context, { hostname: 'helux.web.id' })
     assert.equal(tools.size, 3)
     assert.deepEqual([...tools.keys()].sort(), ['tunnel_start', 'tunnel_status', 'tunnel_stop'])
     assert.match(tools.get('tunnel_start').description, /ONLY when the user explicitly asks/)

@@ -1,30 +1,81 @@
 # dsh-helux-tunnel
 
-A DeepSeek Harness (DSH) plugin that turns a **pre-created, named Cloudflare
+A [DSH] (DSH) plugin that turns a **pre-created, named Cloudflare
 Tunnel** on and off from a **Helux Tunnel** panel in the left sidebar. When ON,
-the tunnel publishes the local DSH Web UI at **https://helux.web.id**. When OFF,
+the tunnel publishes the local DSH Web UI on **your own hostname**. When OFF,
 DSH stays local at **http://127.0.0.1:3080**.
 
 Version 2 adds a second button, **Copy launch URL**, which copies DSH's one-time
-launch URL (`https://helux.web.id/?token=...`) from the token DSH keeps only in
+launch URL (`https://<your-host>/?token=...`) from the token DSH keeps only in
 memory, so the first public visit works without hunting through the terminal.
 Version 2.1 adds **Pair device (QR)**, which shows that same launch URL as a QR
-code for the Helux Android app.
+code for the Helux Android app. Version 2.2 makes the hostname configurable and
+runs on Windows as well as Linux and macOS.
 
 The plugin is built for DSH `0.2.1-rc.5` and `0.2.2-rc.1` (Cordis plugin model,
 Host services in Node, Client module in the Web page).
 
-## Fixed tunnel definition (never changed by the plugin)
+## Use your own domain
+
+Nothing in this plugin is tied to the author's domain. Each deployment runs its
+own `cloudflared` with its own tunnel and credentials, so no traffic ever passes
+through anyone else's server.
+
+With **no plugin configuration**, the plugin adopts whatever hostname your
+tunnel's `config.yml` already publishes:
+
+```yaml
+ingress:
+  - hostname: dsh.example.com
+    service: http://127.0.0.1:3080
+  - service: http_status:404
+```
+
+To be explicit, or to choose among several ingress rows:
+
+```yaml
+# ~/.dsh/profiles/<name>/cordis.patch.yml
+- id: helux-tunnel
+  config:
+    hostname: dsh.example.com
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `hostname` | *(auto)* | Public hostname, bare. Empty adopts the one in `config.yml`. |
+| `localUrl` | `http://127.0.0.1:3080` | Local DSH Web UI. Must be loopback. |
+| `cloudflaredPath` | *(PATH)* | Absolute path to the binary. |
+| `cloudflaredHome` | `~/.cloudflared` | Directory with `config.yml` and credentials. |
+| `accessCheck` | `true` | Probe the public hostname for Cloudflare Access. |
+
+Full guide: **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)**.
+Windows: **[docs/WINDOWS.md](docs/WINDOWS.md)**.
+
+## Platform support
+
+| Platform | Status |
+| --- | --- |
+| Linux | Supported |
+| macOS | Supported |
+| Windows 10/11 | Supported - see [docs/WINDOWS.md](docs/WINDOWS.md) |
+
+The Host half is plain Node.js with no native modules. Windows differences that
+are handled for you: `taskkill /T` instead of `SIGTERM` (Windows has no
+signals, and `/T` is what stops a wrapper's grandchild), `.exe`/`.com`-only
+binary resolution (a `.cmd` cannot be spawned without a shell), quoted `PATH`
+entries, and `%USERPROFILE%` path display. Those rules live in
+`src/host/platform.ts` and are tested on every platform, not just Windows.
+
+## What the plugin does and does not touch
 
 | Item | Value |
 | --- | --- |
-| Public hostname | `helux.web.id` (apex) |
-| Public URL | `https://helux.web.id` |
-| Local service | `http://127.0.0.1:3080` |
-| Tunnel type | Named tunnel, already created by the user |
-| Credentials | `~/.cloudflared/<tunnel-id>.json` |
-| Tunnel config | `~/.cloudflared/config.yml` |
-| Process | `cloudflared tunnel --config ~/.cloudflared/config.yml --no-autoupdate run <tunnel-id>` |
+| Public hostname | Yours - from plugin config, else from `config.yml` |
+| Local service | `http://127.0.0.1:3080` by default, loopback only |
+| Tunnel type | Named tunnel, already created by you |
+| Credentials | `<cloudflared-home>/<tunnel-id>.json` |
+| Tunnel config | `<cloudflared-home>/config.yml` |
+| Process | `cloudflared tunnel --config <config.yml> --no-autoupdate run <tunnel-id>` |
 
 The plugin **never** creates a tunnel, **never** uses a quick tunnel
 (`trycloudflare.com`), **never** generates a random URL, and **never** edits
@@ -36,8 +87,9 @@ The plugin **never** creates a tunnel, **never** uses a quick tunnel
 - Nothing auto-starts on DSH boot, plugin activation, browser reload, or HMR.
 - The only ways to start it are the sidebar switch and the `tunnel_start` agent
   tool (which the agent may call only when you explicitly ask in chat).
-- Pressing OFF sends `SIGTERM` to the `cloudflared` child, escalates to
-  `SIGKILL` after 5 s if needed, and records the stop.
+- Pressing OFF terminates the `cloudflared` child: `SIGTERM` then `SIGKILL` on
+  Linux and macOS, `taskkill /T` then `/T /F` on Windows, which also stops any
+  wrapper's grandchild. The stop is recorded either way.
 - Unloading the plugin or shutting DSH down kills the child process.
 - State is persisted under `~/.dsh/data/helux-tunnel/state.json`, but every load
   forces it back to `enabled: false`; a previous ON is never resumed.
@@ -49,11 +101,10 @@ The plugin **never** creates a tunnel, **never** uses a quick tunnel
 ## Requirements
 
 1. DSH Web profile (`dsh --profile web ...`) on `127.0.0.1:3080`.
-2. The `cloudflared` binary on `PATH` (or `cloudflaredPath` set through the
-   manager options).
-3. An existing named tunnel with `~/.cloudflared/config.yml` and
-   `~/.cloudflared/<tunnel-id>.json`.
-4. The tunnel config must route `helux.web.id` to `http://127.0.0.1:3080`.
+2. The `cloudflared` binary on `PATH`, or `cloudflaredPath` in the plugin config.
+3. An existing named tunnel with `config.yml` and `<tunnel-id>.json` in
+   `~/.cloudflared` (or `cloudflaredHome`).
+4. The tunnel config must route **your** hostname to the local DSH Web UI.
 
 The plugin checks all four prerequisites before every start and shows every
 missing one in the panel. It installs nothing.
@@ -84,24 +135,26 @@ does not run them:
 ```bash
 cloudflared tunnel login
 cloudflared tunnel create helux
-cloudflared tunnel route dns helux helux.web.id
+cloudflared tunnel route dns helux <host>
 ```
 
 ### 2. `~/.cloudflared/config.yml`
 
 ```yaml
 tunnel: <TUNNEL_ID>
-credentials-file: /home/ubuntu/.cloudflared/<TUNNEL_ID>.json
+credentials-file: /home/<you>/.cloudflared/<TUNNEL_ID>.json
 
 ingress:
-  - hostname: helux.web.id
+  - hostname: <host>
     service: http://127.0.0.1:3080
   - service: http_status:404
 ```
 
 The credentials JSON must already exist at
-`~/.cloudflared/<tunnel-id>.json`. Keep both files readable only by you
-(`chmod 600`).
+`<cloudflared-home>/<tunnel-id>.json`. Keep both files readable only by you
+(`chmod 600`; on Windows, restrict the file's ACL to your account). On Windows
+the same files live under `%USERPROFILE%\.cloudflared` - see
+[docs/WINDOWS.md](docs/WINDOWS.md).
 
 ### 3. Start DSH Web so it accepts the public authority
 
@@ -109,10 +162,10 @@ The credentials JSON must already exist at
 loopback authorities unless told otherwise. Start DSH like this:
 
 ```bash
-dsh --profile web --trusted-host helux.web.id --public-url https://helux.web.id
+dsh --profile web --trusted-host <host> --public-url https://<host>
 ```
 
-`--trusted-host helux.web.id` lets `/api` calls from the public page through the
+`--trusted-host <host>` lets `/api` calls from the public page through the
 Host/Origin fence. `--public-url` is optional but makes DSH advertise the public
 URL. Restart DSH after changing either flag.
 
@@ -122,10 +175,10 @@ DSH binds its browser session cookie to the URL authority. Open the public URL
 **once** with the launch token printed by `dsh web`:
 
 ```text
-https://helux.web.id/?token=<launch-token>
+https://<host>/?token=<launch-token>
 ```
 
-That redirects to a clean `https://helux.web.id/` and mints the session cookie
+That redirects to a clean `https://<host>/` and mints the session cookie
 for that authority. Do not share or commit that tokenized URL; it grants access
 to this DSH instance. Without Cloudflare Access, anyone who obtains it (or the
 cookie) can use the UI.
@@ -142,10 +195,10 @@ The sidebar entry opens **Helux Tunnel** in the main column:
   **ERROR** (red).
 - **OFF** message: “Tunnel is OFF. DSH is only accessible locally at
   http://127.0.0.1:3080”.
-- **ON**: the public URL `https://helux.web.id` with **Copy URL** and
+- **ON**: the public URL `https://<host>` with **Copy URL** and
   **Copy launch URL**, a masked launch preview (`?token=••••abcd`), uptime, the
   Cloudflare Access posture, and the last `cloudflared` log lines.
-- **Copy launch URL** copies `https://helux.web.id/?token=<launch-token>` for a
+- **Copy launch URL** copies `https://<host>/?token=<launch-token>` for a
   first visit in a private/incognito window. It never opens the URL itself and
   is disabled when the tunnel is OFF, the local page is not loopback, the local
   DSH Web is down, or DSH cannot expose its token. Each success shows
@@ -162,20 +215,20 @@ localized (English and Chinese).
 ## Copy launch URL: where the token comes from
 
 DSH binds its browser-session cookie to the request authority. A plain visit to
-`https://helux.web.id` from a browser without that cookie returns
+`https://<host>` from a browser without that cookie returns
 `dsh web authentication required; reopen the URL printed by dsh web.` The launch
-URL `https://helux.web.id/?token=<launch-token>` mints the cookie once and
-redirects to the clean URL; after that, plain `https://helux.web.id` works.
+URL `https://<host>/?token=<launch-token>` mints the cookie once and
+redirects to the clean URL; after that, plain `https://<host>` works.
 
 The token source was investigated in this order, against DSH `0.2.1-rc.5` and
 `0.2.2-rc.1`:
 
 | Candidate | Finding |
 | --- | --- |
-| `dsh web` stdout | Prints `dsh web: https://helux.web.id/?token=...` at startup, but a loaded plugin cannot read the parent process's stdout. |
+| `dsh web` stdout | Prints `dsh web: https://<host>/?token=...` at startup, but a loaded plugin cannot read the parent process's stdout. |
 | `~/.dsh` state/session files | The token is **not** written to disk anywhere. |
 | Local DSH endpoint | No shipped endpoint returns the launch token. |
-| **Connection service (used)** | `ctx.get('connection').authenticatedUrl('https://helux.web.id')` from `@deepseek-ai/dsh-client-connection`. This is the same method `dsh-web-app` calls to print the startup URL. |
+| **Connection service (used)** | `ctx.get('connection').authenticatedUrl('https://<host>')` from `@deepseek-ai/dsh-client-connection`. This is the same method `dsh-web-app` calls to print the startup URL. |
 
 The token is DSH's `processLaunchToken`: 32 random bytes encoded as base64url,
 generated once per DSH process and held in an in-memory `WeakMap` keyed by the
@@ -188,7 +241,7 @@ How this plugin uses it:
   copy survives in the plugin.
 - `GET /api/helux-tunnel/status` returns only `launchUrlAvailable`,
   `launchUrlReason`, and the masked preview
-  `https://helux.web.id/?token=••••abcd` (last four characters).
+  `https://<host>/?token=••••abcd` (last four characters).
 - `POST /api/helux-tunnel/launch-url` returns the full URL only to a loopback
   request without Cloudflare/proxy headers. The Client copies it and discards
   it; it is not kept in React state.
@@ -210,7 +263,7 @@ Availability and fallback:
   Plain **Copy URL** keeps working.
 - While OFF, the button is disabled with
   **“Tunnel is OFF. Turn it ON to copy the launch URL.”**
-- When the panel itself is served through `https://helux.web.id`, the button is
+- When the panel itself is served through `https://<host>`, the button is
   disabled because the token endpoint is local-only; use
   `http://127.0.0.1:3080` for tunnel control.
 
@@ -243,7 +296,7 @@ valid until DSH restarts.
 
 ## Security behavior
 
-- When ON, `https://helux.web.id` is **public unless Cloudflare Access is
+- When ON, `https://<host>` is **public unless Cloudflare Access is
   enabled**. The panel states that and adds **“Warning: public without Access
   policy”** when its public-URL probe sees an unprotected response.
 - The plugin never disables, bypasses, or weakens Cloudflare Access. If Access
@@ -285,17 +338,22 @@ dsh-helux-tunnel/
 │   ├── index.ts            # Host entry: tools, HTTP bridge, launch-token callback
 │   ├── host/
 │   │   ├── api.ts          # local-only /api/helux-tunnel bridge
-│   │   ├── constants.ts    # fixed hostname, URLs, paths
+│   │   ├── config.ts       # Config schema, validation, hostname rules
+│   │   ├── constants.ts    # defaults, URLs, paths
 │   │   ├── manager.ts      # cloudflared spawn, state, logs, launch URL masking
+│   │   ├── platform.ts     # Windows/POSIX rules (binary, PATH, termination)
 │   │   ├── prerequisites.ts# binary/config/credentials/port checks
 │   │   └── redact.ts       # secret redaction
 │   └── client/index.tsx    # sidebar entry + ON/OFF panel (React, TSX)
 ├── lib/                    # compiled Host entry (shipped)
 ├── client.js               # built Client module (shipped)
+├── docs/
+│   ├── CONFIGURATION.md    # every option, plus the no-config path
+│   └── WINDOWS.md          # Windows setup and differences
 ├── locale/en.json, zh.json # plugin metadata
 ├── icon.svg                # plugin icon
 ├── scripts/build.mjs       # tsc + Client-module wrapper
-└── test/                   # fake-cloudflared, API, apply, and render tests
+└── test/                   # fake-cloudflared, API, apply, render, platform tests
 ```
 
 ## Build and test
@@ -321,15 +379,15 @@ generated code is scannable. Neither ships to the browser.
 | --- | --- |
 | `cloudflared is not installed or not on PATH` | Install `cloudflared`, then restart DSH. |
 | `Cloudflare Tunnel config not found` | Create `~/.cloudflared/config.yml` with the ingress shown above. |
-| `config.yml has no ingress entry for helux.web.id` | Add the `hostname: helux.web.id` / `service: http://127.0.0.1:3080` row. |
-| `config.yml routes helux.web.id to …` | The service must be exactly `http://127.0.0.1:3080`. |
+| `config.yml has no ingress entry for <host>` | Add the `hostname: <host>` / `service: http://127.0.0.1:3080` row. |
+| `config.yml routes <host> to …` | The service must be exactly `http://127.0.0.1:3080`. |
 | `credentials file is missing` | Recreate/re-authorize the named tunnel; the JSON must be at `~/.cloudflared/<tunnel-id>.json`. |
 | `Nothing is listening on 127.0.0.1:3080` | Start the DSH Web UI on port 3080 first. |
 | `cloudflared did not register … within 20 seconds` | Credentials/network problem; see the log lines in the panel. |
-| Page loads but stays disconnected | Restart DSH Web with `--trusted-host helux.web.id`, then reopen the launch URL once. |
+| Page loads but stays disconnected | Restart DSH Web with `--trusted-host <host>`, then reopen the launch URL once. |
 | `Copy launch URL` is disabled | Hover the button or read the reason below it. OFF, a non-loopback page, a closed port 3080, or a DSH build without the Connection service all disable it. |
 | `Token not found - open the URL printed by dsh web in its terminal` | DSH did not expose a launch token. Copy the tokenized URL from the `dsh web` terminal instead; the plain **Copy URL** button still works. |
-| Launch URL copied but the page still says “authentication required” | The token is per DSH process and is bound to the authority. Make sure DSH runs with `--trusted-host helux.web.id`, copy again after a DSH restart, and open the copied URL in a private window. |
+| Launch URL copied but the page still says “authentication required” | The token is per DSH process and is bound to the authority. Make sure DSH runs with `--trusted-host <host>`, copy again after a DSH restart, and open the copied URL in a private window. |
 | `Tunnel error: … exited unexpectedly` | `cloudflared` stopped on its own; the panel keeps the exit detail and recent log. |
 
 ## Verification checklist
@@ -342,10 +400,10 @@ generated code is scannable. Neither ships to the browser.
 3. Click **Copy launch URL** and paste it into a private/incognito window. It
    must open the DSH UI directly, without “authentication required”. The panel
    shows only a masked preview and the “do not share” toast.
-4. Close that tab and open plain `https://helux.web.id` in a normal tab. It must
+4. Close that tab and open plain `https://<host>` in a normal tab. It must
    open directly because the cookie is already set.
 5. Press **OFF**: the child exits, status returns to **OFF**, the launch button
-   is disabled again, and `https://helux.web.id` is no longer reachable.
+   is disabled again, and `https://<host>` is no longer reachable.
 6. Restart DSH: the panel is **OFF** again, nothing starts by itself, and no
    token from the previous process is available.
 7. With no token source (or from the tunneled page), **Copy launch URL** is

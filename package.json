@@ -1,6 +1,6 @@
 {
   "name": "dsh-helux-tunnel",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "private": true,
   "type": "module",
   "description": "Sidebar control for the named Cloudflare Tunnel publishing the DSH Web UI at https://helux.web.id",
@@ -17,7 +17,8 @@
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
-    "README.md"
+    "README.md",
+    "docs/*.md"
   ],
   "scripts": {
     "build": "node scripts/build.mjs",
@@ -44,5 +45,8 @@
         "@deepseek-ai/dsh-client-ui-sidebar"
       ]
     }
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.5"
   }
 }

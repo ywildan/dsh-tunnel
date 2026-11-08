@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { API_PREFIX, PLUGIN_ID, PUBLIC_URL } from './host/constants.js'
+import { API_PREFIX, PLUGIN_ID } from './host/constants.js'
+import { Config, resolveConfig, toTunnelSettings, type HeluxTunnelConfig } from './host/config.js'
 import { createTunnelRouteHandler } from './host/api.js'
 import {
   HeluxTunnelManager,
@@ -61,6 +62,9 @@ export const name = PLUGIN_ID
 
 /** Services required for the tools and the browser bridge. */
 export const inject = ['tools', 'webServer']
+
+/** Config schema; re-exported so the Loader validates the row and the settings UI can render it. */
+export { Config }
 
 /** Output schema shared by tunnel_start and tunnel_stop. */
 const ACTION_OUTPUT_SCHEMA: Record<string, unknown> = {
@@ -160,8 +164,16 @@ function statusPayload(snapshot: TunnelSnapshot): Record<string, unknown> {
  * persisted state to OFF and runs the preflight checks.
  * @param ctx - Host context with the tool registry and web server.
  */
-export function apply(ctx: HostContext): void {
+export function apply(ctx: HostContext, config?: Partial<HeluxTunnelConfig>): void {
+  // Validation happens here, at activation: a bad hostname must fail the plugin
+  // row loudly instead of starting a tunnel that serves the wrong name.
+  const settings = resolveConfig(config)
+  // Derived before construction: the launch-URL resolver below closes over it,
+  // and reading it off `manager` would make the constructor argument
+  // self-referential.
+  const publicUrl = `https://${settings.hostname}`
   const manager = new HeluxTunnelManager({
+    settings: toTunnelSettings(settings),
     remoteAuthorities: (ctx.get?.('connection') as ConnectionLike | undefined)?.allowsRemoteAuthorities === true,
     // Resolve lazily: the Connection service may load after this plugin, and a
     // reload replaces it. The returned URL is used immediately and discarded;
@@ -170,7 +182,7 @@ export function apply(ctx: HostContext): void {
       const connection = ctx.get?.('connection') as ConnectionLike | undefined
       if (typeof connection?.authenticatedUrl !== 'function') return undefined
       try {
-        return connection.authenticatedUrl(PUBLIC_URL)
+        return connection.authenticatedUrl(publicUrl)
       } catch {
         return undefined
       }
@@ -190,7 +202,7 @@ export function apply(ctx: HostContext): void {
   ctx.effect(() => {
     const disposeStart = ctx.tools.register({
       name: 'tunnel_start',
-      description: 'Turn the Helux Cloudflare Tunnel ON so https://helux.web.id serves the local DSH Web UI at http://127.0.0.1:3080 through the user\'s existing named tunnel. Call this ONLY when the user explicitly asks in this chat to start or turn on the tunnel. Never call it on your own initiative, on startup, after a restart, or merely to inspect state. The sidebar toggle is the primary control. The call fails visibly and starts nothing when cloudflared, the named-tunnel credentials, config.yml, or port 3080 is unavailable.',
+      description: `Turn the Helux Cloudflare Tunnel ON so ${publicUrl} serves the local DSH Web UI at ${settings.localUrl} through the user's existing named tunnel. Call this ONLY when the user explicitly asks in this chat to start or turn on the tunnel. Never call it on your own initiative, on startup, after a restart, or merely to inspect state. The sidebar toggle is the primary control. The call fails visibly and starts nothing when cloudflared, the named-tunnel credentials, config.yml, or the local port is unavailable.`,
       parameters: NO_PARAMETERS,
       output: {
         schema: ACTION_OUTPUT_SCHEMA,
@@ -201,7 +213,7 @@ export function apply(ctx: HostContext): void {
 
     const disposeStop = ctx.tools.register({
       name: 'tunnel_stop',
-      description: 'Turn the Helux Cloudflare Tunnel OFF and stop the cloudflared child process, making https://helux.web.id unreachable. Safe to call when the tunnel is already OFF. Only call when the user explicitly asks to stop or turn off the tunnel, or when shutting down this control at the user\'s request.',
+      description: `Turn the Helux Cloudflare Tunnel OFF and stop the cloudflared child process, making ${publicUrl} unreachable. Safe to call when the tunnel is already OFF. Only call when the user explicitly asks to stop or turn off the tunnel, or when shutting down this control at the user's request.`,
       parameters: NO_PARAMETERS,
       output: {
         schema: ACTION_OUTPUT_SCHEMA,

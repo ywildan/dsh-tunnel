@@ -10,11 +10,32 @@ const NS = 'heluxTunnel'
 /** The id shared by the sidebar entry and the main panel it opens. */
 const PANEL_ID = 'helux-tunnel'
 
-/** Public URL shown while the tunnel is ON. Fixed by requirement. */
-const PUBLIC_URL = 'https://helux.web.id'
-
-/** Local DSH Web root. Fixed by requirement. */
+/** Local DSH Web root shown while the tunnel is OFF and the Host has not reported one. */
 const LOCAL_URL = 'http://127.0.0.1:3080'
+
+/**
+ * Local DSH Web root for a snapshot.
+ * @param snapshot - latest status snapshot.
+ * @returns the configured local URL, falling back to the documented default.
+ */
+function localUrlOf(snapshot: TunnelSnapshot | null): string {
+  return snapshot !== null && typeof snapshot.localUrl === 'string' && snapshot.localUrl.length > 0
+    ? snapshot.localUrl
+    : LOCAL_URL
+}
+
+/**
+ * Public URL for a snapshot.
+ *
+ * The Host derives it from the configured hostname, so the panel never assumes
+ * a domain: an unconfigured snapshot falls back to the empty string rather than
+ * inventing one.
+ * @param snapshot - latest status snapshot.
+ * @returns the public URL, or the empty string when unknown.
+ */
+function publicUrlOf(snapshot: TunnelSnapshot | null): string {
+  return snapshot !== null && snapshot.publicUrl.length > 0 ? snapshot.publicUrl : ''
+}
 
 /** Same-origin bridge registered by the Host half. */
 const API_PREFIX = '/api/helux-tunnel'
@@ -38,6 +59,7 @@ interface TunnelSnapshot {
   stoppedAt: number | null
   uptimeMs: number
   publicUrl: string
+  localUrl?: string
   access: AccessState
   accessCheckedAt: number | null
   accessChecking: boolean
@@ -71,7 +93,7 @@ interface PanelProps {
 const en: Record<string, string> = {
   panel: 'Helux Tunnel',
   title: 'Helux Tunnel',
-  subtitle: 'Cloudflare Tunnel for helux.web.id',
+  subtitle: 'Cloudflare Tunnel for {host}',
   'state.loading': 'Loading tunnel state…',
   'state.unreachable': 'The tunnel controller is unreachable. The Host half of the plugin did not answer on /api/helux-tunnel.',
   'status.off': 'OFF',
@@ -83,7 +105,7 @@ const en: Record<string, string> = {
   'toggle.off': 'OFF',
   'toggle.starting': 'Starting…',
   'toggle.stopping': 'Stopping…',
-  'off.message': 'Tunnel is OFF. DSH is only accessible locally at http://127.0.0.1:3080',
+  'off.message': 'Tunnel is OFF. DSH is only accessible locally at {local}',
   'off.note': 'Nothing is published to the internet while the switch is OFF.',
   'preflight.title': 'Prerequisites',
   'preflight.ok': 'All prerequisites met',
@@ -99,7 +121,7 @@ const en: Record<string, string> = {
   'launch.copying': 'Copying...',
   'launch.preview': 'Masked preview',
   'launch.reason.off': 'Tunnel is OFF. Turn it ON to copy the launch URL.',
-  'launch.reason.remote': 'Launch URL copying is available only from the local DSH page at http://127.0.0.1:3080.',
+  'launch.reason.remote': 'Launch URL copying is available only from the local DSH page at {local}.',
   'launch.reason.token-missing': 'Token not found - open the URL printed by dsh web in its terminal',
   'launch.reason.local-unreachable': 'DSH Web is not reachable at http://127.0.0.1:3080.',
   'launch.toast': 'Launch URL copied - do not share, it is like a password',
@@ -115,9 +137,9 @@ const en: Record<string, string> = {
   'access.access_short': 'Cloudflare Access',
   'access.unknown_short': 'Unverified',
   'access.public_warning': 'Warning: public without Access policy',
-  'access.public_note': 'https://helux.web.id answers requests directly: DSH\'s own launch-token check is the only gate in front of this Web UI. Enable Cloudflare Access on helux.web.id to require a login, and never share the launch URL.',
+  'access.public_note': '{url} answers requests directly: DSH\'s own launch-token check is the only gate in front of this Web UI. Enable Cloudflare Access on {host} to require a login, and never share the launch URL.',
   'access.access_note': 'Cloudflare Access appears to protect this hostname. This plugin does not modify or bypass it.',
-  'access.unknown_note': 'Could not verify Cloudflare Access. When ON, https://helux.web.id is public unless Cloudflare Access is enabled.',
+  'access.unknown_note': 'Could not verify Cloudflare Access. When ON, {url} is public unless Cloudflare Access is enabled.',
   'access.recheck': 'Recheck',
   'access.checking': 'Checking…',
   'logs.title': 'cloudflared log',
@@ -126,16 +148,16 @@ const en: Record<string, string> = {
   'error.title': 'Tunnel error',
   'error.generic': 'The tunnel request failed.',
   'security.title': 'Security',
-  'security.public': 'When ON, https://helux.web.id is public unless Cloudflare Access is enabled.',
+  'security.public': 'When ON, {url} is public unless Cloudflare Access is enabled.',
   'security.never': 'This plugin never disables or bypasses Cloudflare Access.',
   autoStart: 'The tunnel never starts automatically. Every DSH restart begins OFF.',
-  trustHint: 'DSH may reject the public authority. If https://helux.web.id loads but stays disconnected, restart DSH Web with --trusted-host helux.web.id (and optionally --public-url https://helux.web.id).',
+  trustHint: 'DSH may reject the public authority. If {url} loads but stays disconnected, restart DSH Web with --trusted-host {host} (and optionally --public-url {url}).',
 }
 
 const zh: Record<string, string> = {
   panel: 'Helux 隧道',
   title: 'Helux 隧道',
-  subtitle: '用于 helux.web.id 的 Cloudflare 隧道',
+  subtitle: '用于 {host} 的 Cloudflare 隧道',
   'state.loading': '正在加载隧道状态…',
   'state.unreachable': '无法连接隧道控制器。插件的 Host 部分未响应 /api/helux-tunnel。',
   'status.off': '关闭',
@@ -147,7 +169,7 @@ const zh: Record<string, string> = {
   'toggle.off': '关闭',
   'toggle.starting': '正在启动…',
   'toggle.stopping': '正在停止…',
-  'off.message': '隧道已关闭。DSH 仅可通过本地地址 http://127.0.0.1:3080 访问',
+  'off.message': '隧道已关闭。DSH 仅可通过本地地址 {local} 访问',
   'off.note': '开关关闭时，不会有任何内容发布到互联网。',
   'preflight.title': '前置检查',
   'preflight.ok': '所有前置条件已满足',
@@ -163,7 +185,7 @@ const zh: Record<string, string> = {
   'launch.copying': '正在复制...',
   'launch.preview': '脱敏预览',
   'launch.reason.off': '隧道已关闭。请先开启隧道,再复制启动链接。',
-  'launch.reason.remote': '启动链接只能从本地 DSH 页面复制:http://127.0.0.1:3080。',
+  'launch.reason.remote': '启动链接只能从本地 DSH 页面复制:{local}。',
   'launch.reason.token-missing': '未找到令牌 - 请在 dsh web 终端中打开其打印的 URL',
   'launch.reason.local-unreachable': '本地 http://127.0.0.1:3080 上的 DSH Web 不可达。',
   'launch.toast': '启动链接已复制 - 请勿分享,它等同于密码',
@@ -179,9 +201,9 @@ const zh: Record<string, string> = {
   'access.access_short': 'Cloudflare Access',
   'access.unknown_short': '未验证',
   'access.public_warning': '警告：没有 Access 策略，当前为公开状态',
-  'access.public_note': 'https://helux.web.id 会直接响应请求:该 Web UI 前唯一的门槛是 DSH 自身的启动令牌校验。请在 helux.web.id 上启用 Cloudflare Access 以要求登录,并且绝不要分享启动链接。',
+  'access.public_note': '{url} 会直接响应请求:该 Web UI 前唯一的门槛是 DSH 自身的启动令牌校验。请在 {host} 上启用 Cloudflare Access 以要求登录,并且绝不要分享启动链接。',
   'access.access_note': 'Cloudflare Access 似乎正在保护该域名。本插件不会修改或绕过它。',
-  'access.unknown_note': '无法验证 Cloudflare Access。开启后，若未启用 Cloudflare Access，https://helux.web.id 即为公开状态。',
+  'access.unknown_note': '无法验证 Cloudflare Access。开启后，若未启用 Cloudflare Access，{url} 即为公开状态。',
   'access.recheck': '重新检查',
   'access.checking': '检查中…',
   'logs.title': 'cloudflared 日志',
@@ -190,10 +212,10 @@ const zh: Record<string, string> = {
   'error.title': '隧道错误',
   'error.generic': '隧道请求失败。',
   'security.title': '安全提示',
-  'security.public': '开启后，若未启用 Cloudflare Access，https://helux.web.id 将对公网开放。',
+  'security.public': '开启后，若未启用 Cloudflare Access，{url} 将对公网开放。',
   'security.never': '本插件绝不会禁用或绕过 Cloudflare Access。',
   autoStart: '隧道不会自动启动。每次 DSH 重启后都从关闭状态开始。',
-  trustHint: 'DSH 可能拒绝公网 authority。如果 https://helux.web.id 能打开但一直未连接，请使用 --trusted-host helux.web.id（可选再加 --public-url https://helux.web.id）重启 DSH Web。',
+  trustHint: 'DSH 可能拒绝公网 authority。如果 {url} 能打开但一直未连接，请使用 --trusted-host {host}（可选再加 --public-url {url}）重启 DSH Web。',
 }
 //#endregion
 
@@ -328,6 +350,20 @@ function HeluxTunnelPanel({ t }: PanelProps): React.ReactElement {
   const [qrPending, setQrPending] = React.useState(false)
   const [unreachable, setUnreachable] = React.useState(false)
   const [now, setNow] = React.useState(Date.now())
+
+  // Text that names the deployment's own hostname is templated, never hard-coded:
+  // this panel runs on whatever domain the user configured.
+  const hostUrl = publicUrlOf(snapshot)
+  const th = (key: string): string => {
+    const url = hostUrl.length > 0 ? hostUrl : 'the public URL'
+    const host = hostUrl.length > 0 ? hostUrl.replace(/^https?:\/\//, '') : 'the configured hostname'
+    const local = localUrlOf(snapshot)
+    // Single pass so a substitution can never introduce a second placeholder.
+    return t(key).replace(/\{(url|host|local)\}/g, (_match, name: string) => {
+      if (name === 'url') return url
+      return name === 'host' ? host : local
+    })
+  }
   const inFlight = React.useRef(false)
   const copyTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const launchTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -393,7 +429,7 @@ function HeluxTunnelPanel({ t }: PanelProps): React.ReactElement {
     : launchAvailable
       ? null
       : snapshot?.launchLocal === false
-        ? t('launch.reason.remote')
+        ? th('launch.reason.remote')
         : t(`launch.reason.${snapshot?.launchUrlReason ?? 'token-missing'}`)
 
   const toggle = async (): Promise<void> => {
@@ -429,7 +465,7 @@ function HeluxTunnelPanel({ t }: PanelProps): React.ReactElement {
   }
 
   const copyUrl = async (): Promise<void> => {
-    const url = snapshot?.publicUrl ?? PUBLIC_URL
+    const url = publicUrlOf(snapshot)
     if (!(await writeClipboard(url))) return
     setCopied(true)
     if (copyTimer.current !== null) clearTimeout(copyTimer.current)
@@ -538,14 +574,14 @@ function HeluxTunnelPanel({ t }: PanelProps): React.ReactElement {
   const accessNote = access === 'public'
     ? h('div', { className: 'ht-banner ht-banner-danger', role: 'status' },
         h('strong', null, t('access.public_warning')),
-        h('span', null, t('access.public_note')))
+        h('span', null, th('access.public_note')))
     : access === 'access'
       ? h('div', { className: 'ht-banner ht-banner-ok', role: 'status' },
           h('strong', null, t('access.access_short')),
           h('span', null, t('access.access_note')))
       : h('div', { className: 'ht-banner ht-banner-warn', role: 'status' },
           h('strong', null, t('access.unknown_short')),
-          h('span', null, t('access.unknown_note')),
+          h('span', null, th('access.unknown_note')),
           h('button', {
             type: 'button',
             className: 'ht-button ht-button-small',
@@ -556,7 +592,7 @@ function HeluxTunnelPanel({ t }: PanelProps): React.ReactElement {
   const header = h('header', { className: 'ht-head' },
     h('div', { className: 'ht-head-text' },
       h('h1', { className: 'ht-title' }, t('title')),
-      h('p', { className: 'ht-subtitle' }, t('subtitle'))),
+      h('p', { className: 'ht-subtitle' }, th('subtitle'))),
     h('span', { className: `ht-status ht-status-${status}` },
       isConnecting
         ? h('span', { className: 'ht-spinner', 'aria-hidden': true })
@@ -586,8 +622,8 @@ function HeluxTunnelPanel({ t }: PanelProps): React.ReactElement {
         : t(isOn ? 'toggle.on' : 'toggle.off'))),
     h('div', { className: 'ht-power-side' },
       h('div', { className: 'ht-kicker' }, t('on.publicUrl')),
-      h('code', { className: 'ht-local' }, isOn ? (snapshot.publicUrl || PUBLIC_URL) : LOCAL_URL),
-      h('p', { className: 'ht-power-note' }, isOn ? t('off.note') : t('off.message'))))
+      h('code', { className: 'ht-local' }, isOn ? publicUrlOf(snapshot) : localUrlOf(snapshot)),
+      h('p', { className: 'ht-power-note' }, isOn ? t('off.note') : th('off.message'))))
 
   const errorBanner = message !== null
     ? h('div', { className: 'ht-banner ht-banner-error', role: 'alert' },
@@ -662,10 +698,10 @@ function HeluxTunnelPanel({ t }: PanelProps): React.ReactElement {
             h('div', { className: 'ht-kicker' }, t('on.publicUrl')),
             h('a', {
               className: 'ht-url',
-              href: snapshot.publicUrl || PUBLIC_URL,
+              href: publicUrlOf(snapshot),
               target: '_blank',
               rel: 'noreferrer noopener',
-            }, snapshot.publicUrl || PUBLIC_URL)),
+            }, publicUrlOf(snapshot))),
           h('div', { className: 'ht-url-actions' },
             h('button', { type: 'button', className: 'ht-button', onClick: () => { void copyUrl() } },
               copied ? t('on.copied') : t('on.copy')),
@@ -688,12 +724,12 @@ function HeluxTunnelPanel({ t }: PanelProps): React.ReactElement {
             h('div', { className: 'ht-kicker' }, t('on.access')),
             h('div', { className: 'ht-meta-value' }, t(`access.${access}_short`)))),
         accessNote,
-        snapshot.remoteAuthorities === false ? h('p', { className: 'ht-note' }, t('trustHint')) : null,
+        snapshot.remoteAuthorities === false ? h('p', { className: 'ht-note' }, th('trustHint')) : null,
         logs)
     : isError
       ? h('section', { className: 'ht-card' }, logs)
       : h('section', { className: 'ht-card ht-off-card' },
-          h('p', { className: 'ht-off-message' }, t('off.message')),
+          h('p', { className: 'ht-off-message' }, th('off.message')),
           h('p', { className: 'ht-note' }, t('off.note')),
           h('div', { className: 'ht-launch-row' },
             h('button', {
@@ -719,7 +755,7 @@ function HeluxTunnelPanel({ t }: PanelProps): React.ReactElement {
   const footer = h('footer', { className: 'ht-foot' },
     h('p', null,
       h('strong', null, `${t('security.title')}: `),
-      t('security.public')),
+      th('security.public')),
     h('p', null, t('security.never')),
     h('p', { className: 'ht-muted' }, t('autoStart')))
 

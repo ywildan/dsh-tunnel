@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Helux 隧道",
-    "description": "通过左侧边栏的 ON/OFF 开关管理将本 DSH Web UI 发布到 https://helux.web.id 的 Cloudflare 命名隧道。默认关闭，绝不自动启动。"
+    "description": "通过左侧边栏的 ON/OFF 开关管理将本 DSH Web UI 发布到自有域名的 Cloudflare 命名隧道。默认关闭，绝不自动启动。"
   }
 }

@@ -9,14 +9,14 @@ import {
   type TunnelConfig,
   type TunnelSettings,
 } from './prerequisites.js'
+import { terminationStrategy } from './platform.js'
 import { redactSecrets } from './redact.js'
 import {
   CLIENT_LOG_LINES,
   DEFAULT_CLOUDFLARED_HOME,
-  LOCAL_URL,
+  DEFAULT_HOSTNAME,
+  DEFAULT_LOCAL_URL,
   MEMORY_LOG_LINES,
-  PUBLIC_HOSTNAME,
-  PUBLIC_URL,
   resolveDshHome,
 } from './constants.js'
 
@@ -49,6 +49,8 @@ export interface TunnelSnapshot {
   stoppedAt: number | null
   uptimeMs: number
   publicUrl: string
+  /** Local DSH Web root the tunnel points at, as configured. */
+  localUrl: string
   access: AccessState
   accessCheckedAt: number | null
   accessChecking: boolean
@@ -174,6 +176,8 @@ async function defaultProbe(url: string, signal: AbortSignal): Promise<AccessPro
  */
 export class HeluxTunnelManager {
   private readonly settings: TunnelSettings
+  /** Hostname adopted from config.yml when the plugin row configures none. */
+  private derivedHostname: string | null = null
   private readonly logger: ((line: string) => void) | undefined
   private readonly probe: AccessProbe
   private readonly remoteAuthorities: boolean | undefined
@@ -210,8 +214,8 @@ export class HeluxTunnelManager {
     this.settings = {
       cloudflaredHome: options.settings?.cloudflaredHome ?? DEFAULT_CLOUDFLARED_HOME,
       dshHome: options.settings?.dshHome ?? resolveDshHome(),
-      hostname: options.settings?.hostname ?? PUBLIC_HOSTNAME,
-      localUrl: options.settings?.localUrl ?? LOCAL_URL,
+      hostname: options.settings?.hostname ?? DEFAULT_HOSTNAME,
+      localUrl: options.settings?.localUrl ?? DEFAULT_LOCAL_URL,
       ...(options.settings?.cloudflaredPath !== undefined ? { cloudflaredPath: options.settings.cloudflaredPath } : {}),
     }
     this.logger = options.logger
@@ -240,12 +244,37 @@ export class HeluxTunnelManager {
   }
 
   /**
+   * Hostname the tunnel publishes.
+   *
+   * The plugin row wins when it sets one; otherwise the value is taken from the
+   * tunnel's own `config.yml` ingress, so a user who already configured
+   * cloudflared needs no plugin configuration at all.
+   * @returns the effective hostname, or null before the first preflight.
+   */
+  get hostname(): string | null {
+    if (this.settings.hostname.length > 0) return this.settings.hostname
+    return this.derivedHostname
+  }
+
+  /**
+   * Public origin for the effective hostname.
+   * @returns the origin, or the empty string while the hostname is unknown.
+   */
+  get publicUrl(): string {
+    const hostname = this.hostname
+    return hostname === null ? '' : `https://${hostname}`
+  }
+
+  /**
    * Re-run every preflight check. Never spawns or installs anything.
    * @returns the fresh report.
    */
   async refreshPrerequisites(): Promise<PrerequisiteReport> {
     const report = await checkPrerequisites(this.settings)
     this.prereqReport = report
+    if (report.hostname !== undefined && report.hostname.length > 0) {
+      this.derivedHostname = report.hostname
+    }
     return report
   }
 
@@ -267,7 +296,8 @@ export class HeluxTunnelManager {
       startedAt: this.startedAt,
       stoppedAt: this.stoppedAt,
       uptimeMs: this.status === 'on' && this.startedAt !== null ? Date.now() - this.startedAt : 0,
-      publicUrl: PUBLIC_URL,
+      publicUrl: this.publicUrl,
+      localUrl: this.settings.localUrl,
       access: this.access,
       accessCheckedAt: this.accessCheckedAt,
       accessChecking: this.accessChecking,
@@ -318,7 +348,7 @@ export class HeluxTunnelManager {
     const config: TunnelConfig = report.config
     const binary = report.binary
     const args = ['tunnel', '--config', config.configPath, '--no-autoupdate', 'run', config.tunnelId]
-    this.appendLog(`[helux-tunnel] START requested for https://${this.settings.hostname}`)
+    this.appendLog(`[helux-tunnel] START requested for ${this.publicUrl || '(hostname not configured)'}`)
 
     try {
       const child = spawn(binary, args, {
@@ -405,19 +435,11 @@ export class HeluxTunnelManager {
     this.clearReadiness()
 
     this.stopPromise = (async (): Promise<TunnelActionResult> => {
-      try {
-        child.kill('SIGTERM')
-      } catch {
-        /* already gone */
-      }
+      terminateTree(child, false)
       const escalation = setTimeout(() => {
         if (this.child === child) {
-          this.appendLog('[helux-tunnel] cloudflared did not exit after SIGTERM; escalating to SIGKILL')
-          try {
-            child.kill('SIGKILL')
-          } catch {
-            /* already gone */
-          }
+          this.appendLog(`[helux-tunnel] cloudflared did not exit after ${process.platform === 'win32' ? 'termination request' : 'SIGTERM'}; forcing it`)
+          terminateTree(child, true)
         }
       }, STOP_SIGNAL_TIMEOUT_MS)
       escalation.unref?.()
@@ -426,11 +448,7 @@ export class HeluxTunnelManager {
       clearTimeout(escalation)
 
       if (this.child === child) {
-        try {
-          child.kill('SIGKILL')
-        } catch {
-          /* already gone */
-        }
+        terminateTree(child, true)
         await Promise.race([this.exitDeferred?.promise ?? Promise.resolve(), delay(2_000)])
       }
       if (this.child === child) {
@@ -453,12 +471,15 @@ export class HeluxTunnelManager {
    */
   async probeAccess(): Promise<void> {
     if (this.status !== 'on' || this.accessChecking) return
+    // Nothing to probe until a hostname is known; leave Access as 'unknown'
+    // rather than fetching an empty URL.
+    if (this.publicUrl.length === 0) return
     this.accessChecking = true
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 8_000)
     timer.unref?.()
     try {
-      const result = await this.probe(PUBLIC_URL, controller.signal)
+      const result = await this.probe(this.publicUrl, controller.signal)
       this.access = classifyAccess(result)
       this.accessCheckedAt = Date.now()
       this.appendLog(`[helux-tunnel] ACCESS_CHECK ${this.access} (HTTP ${result.status})`)
@@ -522,7 +543,7 @@ export class HeluxTunnelManager {
       const candidate = this.resolveLaunchUrl()
       if (typeof candidate !== 'string' || candidate.length === 0) return null
       const url = new URL(candidate)
-      if (url.protocol !== 'https:' || url.hostname !== PUBLIC_HOSTNAME) return null
+      if (url.protocol !== 'https:' || url.hostname !== this.hostname) return null
       const token = url.searchParams.get('token')
       if (token === null || token.length === 0) return null
       return url.href
@@ -585,7 +606,7 @@ export class HeluxTunnelManager {
     this.startedAt ??= Date.now()
     this.error = null
     this.errorCode = null
-    this.appendLog(`[helux-tunnel] TUNNEL_ON ${PUBLIC_URL}`)
+    this.appendLog(`[helux-tunnel] TUNNEL_ON ${this.publicUrl || '(hostname not configured)'}`)
     void this.persistState()
     void this.probeAccess()
   }
@@ -613,19 +634,9 @@ export class HeluxTunnelManager {
   private terminateAfterError(): void {
     const child = this.child
     if (child === null) return
-    try {
-      child.kill('SIGTERM')
-    } catch {
-      /* already gone */
-    }
+    terminateTree(child, false)
     const escalation = setTimeout(() => {
-      if (this.child === child) {
-        try {
-          child.kill('SIGKILL')
-        } catch {
-          /* already gone */
-        }
-      }
+      if (this.child === child) terminateTree(child, true)
     }, 4_000)
     escalation.unref?.()
   }
@@ -715,7 +726,7 @@ export class HeluxTunnelManager {
       enabled: this.status === 'on',
       status: this.status,
       updatedAt: new Date().toISOString(),
-      publicUrl: PUBLIC_URL,
+      publicUrl: this.publicUrl,
       note: 'Auto-start is disabled. Every DSH start forces this state to disabled/off; a previous ON is never resumed.',
     }
     await writeFile(this.statePath, `${JSON.stringify(payload, null, 2)}\n`).catch(() => undefined)
@@ -730,9 +741,12 @@ export class HeluxTunnelManager {
  */
 function maskedLaunchPreview(url: string): string | null {
   try {
-    const token = new URL(url).searchParams.get('token')
+    const parsed = new URL(url)
+    const token = parsed.searchParams.get('token')
     if (token === null || token.length === 0) return null
-    return `${PUBLIC_URL}/?token=••••${token.slice(-4)}`
+    // Echo the URL's own origin so a misconfigured hostname is visible in the
+    // preview instead of being masked by a hard-coded one.
+    return `${parsed.origin}/?token=••••${token.slice(-4)}`
   } catch {
     return null
   }
@@ -748,6 +762,53 @@ function createDeferred(): { promise: Promise<void>; resolve: () => void } {
     resolve = settle
   })
   return { promise, resolve }
+}
+
+
+/**
+ * Send a termination signal to the child in a way each platform understands.
+ *
+ * POSIX has SIGTERM, which lets cloudflared close its connections cleanly.
+ * Windows has no signals: Node maps every `kill()` to TerminateProcess, so the
+ * graceful path does not exist and `SIGKILL` is equivalent. The distinction is
+ * kept because the ordering still matters on POSIX and the log line should be
+ * honest about what happened.
+ * @param child - process to signal.
+ * @param signal - requested signal.
+ */
+function signalChild(child: ChildProcess, signal: NodeJS.Signals): void {
+  try {
+    child.kill(signal)
+  } catch {
+    // The process already exited; every caller tolerates that.
+  }
+}
+
+/**
+ * Recursively terminate a child and its descendants.
+ *
+ * On Windows `spawn` starts the real cloudflared process directly, but any
+ * wrapper (a shim, a `cmd /c`) leaves a grandchild holding the tunnel open. A
+ * plain `kill` would report success while the tunnel stayed reachable, so the
+ * tree is terminated explicitly.
+ * @param child - process to terminate.
+ * @param escalate - true for the forced pass.
+ */
+function terminateTree(child: ChildProcess, escalate: boolean): void {
+  const pid = child.pid
+  const strategy = terminationStrategy(process.platform)
+  const mode = escalate ? strategy.forced : strategy.graceful
+  if (mode === 'taskkill' && pid !== undefined) {
+    try {
+      // /T terminates the tree, /F forces it.
+      const args = escalate ? ['/pid', String(pid), '/T', '/F'] : ['/pid', String(pid), '/T']
+      spawn('taskkill', args, { stdio: 'ignore', windowsHide: true }).once('error', () => undefined)
+      return
+    } catch {
+      // Fall through to the plain signal.
+    }
+  }
+  signalChild(child, escalate ? 'SIGKILL' : 'SIGTERM')
 }
 
 /**

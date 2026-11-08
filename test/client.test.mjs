@@ -82,7 +82,17 @@ test('the Client bundle registers the panel and sidebar entry without starting a
   assert.deepEqual(injected, ['main', 'sidebar.panellist'])
   assert.equal(dictionaries.get('heluxTunnel')?.en.panel, 'Helux Tunnel')
   assert.equal(dictionaries.get('heluxTunnel')?.zh.panel, 'Helux 隧道')
-  assert.ok(dictionaries.get('heluxTunnel')?.en['off.message'].includes('http://127.0.0.1:3080'))
+  // The local URL is templated so a non-default localUrl is shown correctly.
+  assert.ok(dictionaries.get('heluxTunnel')?.en['off.message'].includes('{local}'))
+  for (const locale of ['en', 'zh']) {
+    const entries = dictionaries.get('heluxTunnel')?.[locale] ?? {}
+    for (const [key, value] of Object.entries(entries)) {
+      assert.ok(
+        !value.includes('helux.web.id'),
+        `${locale}.${key} must not hard-code a hostname; the panel renders on any domain`,
+      )
+    }
+  }
 
   const panel = registered.find((entry) => entry.options.name === 'main')
   assert.equal(panel?.options.key, 'helux-tunnel')

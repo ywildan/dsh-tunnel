@@ -1,7 +1,8 @@
 import { accessSync, constants as fsConstants, existsSync, readFileSync, statSync } from 'node:fs'
 import { createConnection } from 'node:net'
 import { homedir } from 'node:os'
-import { delimiter, join } from 'node:path'
+import { binDirectories, collapseHome, executableExtensions, pathDirectories } from './platform.js'
+import { join } from 'node:path'
 
 /** Fixed inputs the plugin is allowed to use, plus test-only path overrides. */
 export interface TunnelSettings {
@@ -44,6 +45,8 @@ export interface PrerequisiteReport {
   ok: boolean
   checks: PrerequisiteCheck[]
   config?: TunnelConfig
+  /** Hostname the tunnel actually publishes, taken from config.yml. */
+  hostname?: string
   binary?: string
   checkedAt: number
 }
@@ -61,8 +64,7 @@ export function localPort(localUrl: string): number {
  * @returns display-safe path text.
  */
 export function displayPath(path: string): string {
-  const home = homedir()
-  return path === home || path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path
+  return collapseHome(path, homedir())
 }
 
 /**
@@ -75,7 +77,9 @@ function scalar(raw: string): string {
   const unquoted = (trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))
     ? trimmed.slice(1, -1)
     : trimmed
-  if (unquoted === '~' || unquoted.startsWith('~/')) return join(homedir(), unquoted.slice(1))
+  // Both separators: a config.yml copied from a Windows machine uses `~\`.
+  if (unquoted === '~') return homedir()
+  if (unquoted.startsWith('~/') || unquoted.startsWith('~\\')) return join(homedir(), unquoted.slice(2))
   return unquoted
 }
 
@@ -112,7 +116,10 @@ function stripComment(line: string): string {
  * @param settings - fixed paths and hostname.
  * @returns the parsed config or the reason it is unusable.
  */
-export function parseTunnelConfig(text: string, settings: TunnelSettings): { config?: TunnelConfig; error?: string } {
+export function parseTunnelConfig(
+  text: string,
+  settings: TunnelSettings,
+): { config?: TunnelConfig; hostname?: string; error?: string } {
   const rows = text.split(/\r?\n/)
   let tunnelId = ''
   let credentialsFile = ''
@@ -160,15 +167,44 @@ export function parseTunnelConfig(text: string, settings: TunnelSettings): { con
     return { error: `config.yml has no "ingress:" rules.` }
   }
 
-  const hostname = settings.hostname.toLowerCase()
-  const rule = ingress.find((entry) => (entry.hostname ?? '').toLowerCase() === hostname)
-  if (rule === undefined) {
-    return { error: `config.yml has no ingress entry for ${settings.hostname}.` }
-  }
   const expected = normalizeService(settings.localUrl)
-  const actual = normalizeService(rule.service ?? '')
+  const configured = settings.hostname.toLowerCase()
+
+  // Which ingress row this plugin will use.
+  //
+  // With no configured hostname the plugin adopts the tunnel's own ingress, so
+  // a user who already set up `cloudflared` needs no plugin configuration at
+  // all. Rows without a hostname are catch-alls (`http_status:404`) and are
+  // never candidates.
+  const candidates = ingress.filter((entry) => (entry.hostname ?? '').length > 0)
+  let rule: IngressRule | undefined
+  if (configured.length > 0) {
+    rule = candidates.find((entry) => (entry.hostname ?? '').toLowerCase() === configured)
+    if (rule === undefined) {
+      const known = candidates.map((entry) => entry.hostname).join(', ')
+      return {
+        error: `config.yml has no ingress entry for ${settings.hostname}.${known === '' ? '' : ` It declares: ${known}.`}`,
+      }
+    }
+  } else {
+    const matching = candidates.filter((entry) => normalizeService(entry.service ?? '') === expected)
+    if (matching.length === 0) {
+      return {
+        error: `config.yml has no ingress entry routing a hostname to ${settings.localUrl}. Set the plugin's "hostname" option, or point an ingress row at ${settings.localUrl}.`,
+      }
+    }
+    if (matching.length > 1) {
+      return {
+        error: `config.yml routes several hostnames to ${settings.localUrl} (${matching.map((entry) => entry.hostname).join(', ')}). Set the plugin's "hostname" option to choose one.`,
+      }
+    }
+    rule = matching[0]
+  }
+
+  const resolvedHostname = (rule?.hostname ?? '').toLowerCase()
+  const actual = normalizeService(rule?.service ?? '')
   if (actual !== expected) {
-    return { error: `config.yml routes ${settings.hostname} to "${rule.service ?? ''}", but this plugin requires ${settings.localUrl}.` }
+    return { error: `config.yml routes ${resolvedHostname} to "${rule?.service ?? ''}", but this plugin requires ${settings.localUrl}.` }
   }
 
   const configPath = join(settings.cloudflaredHome, 'config.yml')
@@ -179,6 +215,7 @@ export function parseTunnelConfig(text: string, settings: TunnelSettings): { con
       credentialsFile: credentialsFile.length > 0 ? credentialsFile : join(settings.cloudflaredHome, `${tunnelId}.json`),
       ingress,
     },
+    hostname: resolvedHostname,
   }
 }
 
@@ -206,18 +243,26 @@ function normalizeService(service: string): string {
 }
 
 /**
- * Whether a path is an executable regular file.
+ * Whether a path is a runnable regular file.
+ *
+ * POSIX needs the execute bit; Windows has no execute bit and reports a
+ * non-executable file as executable, so there the regular-file check is the
+ * whole test. Treating the two the same makes `cloudflared.exe` invisible on
+ * Windows while claiming `.txt` files are runnable.
  * @param path - candidate path.
  * @returns true when the file can be executed.
  */
 function isExecutable(path: string): boolean {
   try {
+    if (!statSync(path).isFile()) return false
+    if (process.platform === 'win32') return true
     accessSync(path, fsConstants.X_OK)
-    return statSync(path).isFile()
+    return true
   } catch {
     return false
   }
 }
+
 
 /**
  * Locate the `cloudflared` binary: an explicit path wins, then PATH, then the
@@ -229,13 +274,11 @@ export function resolveCloudflaredBinary(settings: TunnelSettings): string | und
   if (settings.cloudflaredPath !== undefined && settings.cloudflaredPath.length > 0) {
     return isExecutable(settings.cloudflaredPath) ? settings.cloudflaredPath : undefined
   }
-  const extensions = process.platform === 'win32' ? ['.exe', '.cmd', '.bat', ''] : ['']
-  const directories = new Set((process.env.PATH ?? '').split(delimiter).filter((entry) => entry.length > 0))
-  if (process.platform !== 'win32') {
-    for (const fallback of ['/usr/local/bin', '/opt/homebrew/bin', '/usr/bin', join(homedir(), '.local', 'bin')]) {
-      directories.add(fallback)
-    }
-  }
+  const directories = new Set([
+    ...pathDirectories(process.platform, process.env.PATH),
+    ...binDirectories(process.platform, process.env, homedir()),
+  ])
+  const extensions = executableExtensions(process.platform, process.env.PATHEXT)
   for (const directory of directories) {
     for (const extension of extensions) {
       const candidate = join(directory, `cloudflared${extension}`)
@@ -253,7 +296,7 @@ export function resolveCloudflaredBinary(settings: TunnelSettings): string | und
 function checkCredentialsFile(file: string): PrerequisiteCheck {
   const check: PrerequisiteCheck = { id: 'credentials', ok: false, message: '' }
   if (!existsSync(file)) {
-    check.message = 'Cloudflare Tunnel credentials file is missing (expected ~/.cloudflared/<tunnel-id>.json).'
+    check.message = `Cloudflare Tunnel credentials file is missing (expected <cloudflared-home>/<tunnel-id>.json).`
     check.hint = 'Create or re-authorize the named tunnel; the credentials file must exist before the tunnel can start.'
     return check
   }
@@ -340,12 +383,13 @@ export async function checkPrerequisites(settings: TunnelSettings): Promise<Prer
 
   const configPath = join(settings.cloudflaredHome, 'config.yml')
   let parsedConfig: TunnelConfig | undefined
+  let resolvedHostname = settings.hostname
   if (!existsSync(configPath)) {
     checks.push({
       id: 'config',
       ok: false,
       message: 'Cloudflare Tunnel config not found at ~/.cloudflared/config.yml.',
-      hint: 'Create the named-tunnel config with a helux.web.id ingress to http://127.0.0.1:3080.',
+      hint: `Create the named-tunnel config with a ${settings.hostname} ingress to ${settings.localUrl}.`,
     })
   } else {
     try {
@@ -355,18 +399,19 @@ export async function checkPrerequisites(settings: TunnelSettings): Promise<Prer
           id: 'config',
           ok: false,
           message: parsed.error ?? 'Cloudflare Tunnel config could not be parsed.',
-          hint: 'The plugin never edits config.yml. Fix the tunnel id and the helux.web.id ingress manually.',
+          hint: `The plugin never edits config.yml. Fix the tunnel id and the ${settings.hostname} ingress manually.`,
         })
       } else {
         parsedConfig = parsed.config
-        checks.push({ id: 'config', ok: true, message: 'Tunnel config routes helux.web.id to the local DSH Web UI.' })
+        resolvedHostname = parsed.hostname ?? settings.hostname
+        checks.push({ id: 'config', ok: true, message: `Tunnel config routes ${resolvedHostname} to the local DSH Web UI.` })
       }
     } catch {
       checks.push({
         id: 'config',
         ok: false,
         message: 'Cloudflare Tunnel config could not be read.',
-        hint: 'Check the file permissions on ~/.cloudflared/config.yml.',
+        hint: `Check the file permissions on ${displayPath(configPath)}`,
       })
     }
   }
@@ -399,6 +444,7 @@ export async function checkPrerequisites(settings: TunnelSettings): Promise<Prer
     ok: checks.every((check) => check.ok),
     checks,
     ...(parsedConfig !== undefined ? { config: parsedConfig } : {}),
+    ...(resolvedHostname.length > 0 ? { hostname: resolvedHostname } : {}),
     ...(binary !== undefined ? { binary } : {}),
     checkedAt: Date.now(),
   }

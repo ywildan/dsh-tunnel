@@ -1,6 +1,17 @@
 # dsh-helux-tunnel bundle patch.
 # Inserts one Host row; its `dsh.client` declaration loads the matching Client
 # module that registers the "Helux Tunnel" sidebar entry and main panel.
+#
+# No config here on purpose: with `hostname` unset the plugin adopts the
+# hostname already published by your tunnel's config.yml, so most deployments
+# need no plugin configuration at all. To override anything, add a row to your
+# profile patch instead of editing this file:
+#
+#   - id: helux-tunnel
+#     config:
+#       hostname: dsh.example.com
+#
+# See docs/CONFIGURATION.md for every option.
 - insert:
     - id: helux-tunnel
       name: dsh-helux-tunnel
