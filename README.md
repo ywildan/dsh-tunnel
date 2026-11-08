@@ -217,7 +217,7 @@ Availability and fallback:
 ## Pair an Android device (QR)
 
 The **Pair device (QR)** button in the URL row renders the launch URL as a QR
-code, so the [Helux DSH Android app](../HeluxDsh) can pair by scanning instead of
+code, so the Helux DSH Android app can pair by scanning instead of
 typing.
 
 - It is enabled under exactly the same conditions as **Copy launch URL**: tunnel
