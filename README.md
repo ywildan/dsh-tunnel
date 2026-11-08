@@ -111,19 +111,39 @@ missing one in the panel. It installs nothing.
 
 ## Install
 
-```bash
-# from a local checkout/directory
-dsh plugin --profile web add /absolute/path/to/dsh-helux-tunnel
+Straight from GitHub - this is the supported path today, and it needs no build
+step because the compiled `lib/` and `client.js` are committed:
 
-# or from a package registry, if published
-dsh plugin --profile web add dsh-helux-tunnel
+```bash
+dsh plugin --profile web add github:ywildan/dsh-tunnel
 ```
 
-Then restart `dsh web` (or use the Plugins page in the Web sidebar). The
-**Helux Tunnel** entry appears in the left sidebar.
+Or from a local checkout:
 
-> Build note: the package ships built `lib/` and `client.js`. Only rebuild after
-> editing `src/`: `npm install && npm run build`.
+```bash
+dsh plugin --profile web add /absolute/path/to/dsh-helux-tunnel
+```
+
+Then restart `dsh web`. The **Helux Tunnel** entry appears in the left sidebar.
+
+> `dsh plugin add dsh-helux-tunnel` (bare package name) does **not** work yet:
+> the package is not published to npm. Use the `github:` spec above.
+
+### For an agent installing this
+
+An agent can run the `add` command itself, but two steps need the human:
+
+1. **`cloudflared tunnel login`** opens a browser and asks which zone to
+   authorize. That is a domain-ownership decision and cannot be delegated.
+2. **Restarting `dsh web`** with `--trusted-host` and `--public-url`.
+
+Everything else - installing the plugin, writing `config.yml`, creating the
+tunnel, routing DNS - the agent can do.
+
+> Build note for contributors: `lib/` and `client.js` are committed because the
+> git install never rebuilds them. After editing `src/`, run
+> `npm run build` and commit the output; `npm run check` (and CI) fails if the
+> committed output does not match `src/`.
 
 ## One-time tunnel and DSH setup
 
@@ -428,3 +448,7 @@ that the full URL never appears in the rendered panel tree.
 > `POST /launch-url` was refused with 403, and the token appeared in neither
 > `state.json` nor `helux-tunnel.log`. The masked preview and the full token were
 > never printed during that check.
+
+## License
+
+[MIT](LICENSE). Use it, fork it, ship it on your own domain.

@@ -18,11 +18,13 @@
     "locale/*.json",
     "icon.svg",
     "README.md",
-    "docs/*.md"
+    "docs/*.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "check": "npm run test && node scripts/check-build.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

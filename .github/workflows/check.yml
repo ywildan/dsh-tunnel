@@ -1,0 +1,71 @@
+name: Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push supersedes an older run on the same branch.
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Test and verify committed build output
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # The Host half is plain Node.js and the Windows paths are pure
+        # functions, so the same suite proves both platforms from one runner.
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Unit tests
+        run: npm test
+
+      # `dsh plugin add github:...` installs the committed lib/ and client.js
+      # and never rebuilds them, so a stale artifact would ship old behaviour
+      # with no error anywhere in the install path.
+      - name: Verify committed build output matches src/
+        if: runner.os == 'Linux'
+        run: node scripts/check-build.mjs
+
+      - name: Verify the package packs the files it claims
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          npm pack --dry-run --json > pack.json
+          node -e "
+          const files = require('./pack.json')[0].files.map((f) => f.path);
+          const required = ['client.js', 'cordis.patch.yml', 'icon.svg', 'LICENSE', 'README.md',
+            'lib/index.js', 'lib/host/manager.js', 'lib/host/config.js', 'lib/host/platform.js',
+            'locale/en.json', 'locale/zh.json', 'docs/CONFIGURATION.md', 'docs/WINDOWS.md'];
+          const missing = required.filter((p) => !files.includes(p));
+          if (missing.length > 0) {
+            console.error('::error::package is missing: ' + missing.join(', '));
+            process.exit(1);
+          }
+          if (!files.some((p) => p.startsWith('src/'))) {
+            console.log('ok: source is not shipped, only build output');
+          }
+          console.log('ok: ' + files.length + ' files, all required paths present');
+          "
