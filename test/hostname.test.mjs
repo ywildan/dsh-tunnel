@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import test from 'node:test'
 import { HeluxTunnelManager } from '../lib/host/manager.js'
-import { makeFixture, waitFor } from './helpers.mjs'
+import { canSpawnFakeBinary, makeFixture, SPAWN_SKIP_REASON, waitFor } from './helpers.mjs'
 
 // These tests exercise the whole manager against a fake cloudflared, so they
 // prove that a deployment on someone else's domain actually starts, reports the
@@ -29,7 +29,7 @@ async function repoint(fixture, hostname) {
   )
 }
 
-test('a configured hostname is what the tunnel actually publishes', async () => {
+test('a configured hostname is what the tunnel actually publishes', { skip: canSpawnFakeBinary ? false : SPAWN_SKIP_REASON }, async () => {
   const fixture = await makeFixture()
   try {
     await repoint(fixture, 'dsh.example.com')

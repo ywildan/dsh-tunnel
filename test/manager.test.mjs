@@ -5,7 +5,7 @@ import test from 'node:test'
 import { createTunnelRouteHandler, isLocalRequest } from '../lib/host/api.js'
 import { HeluxTunnelManager } from '../lib/host/manager.js'
 import { parseTunnelConfig } from '../lib/host/prerequisites.js'
-import { callHandler, makeFixture, waitFor } from './helpers.mjs'
+import { callHandler, canSpawnFakeBinary, makeFixture, SPAWN_SKIP_REASON, waitFor } from './helpers.mjs'
 
 /** Read the persisted state file for a fixture. */
 async function readState(dshHome) {
@@ -113,7 +113,7 @@ test('start refuses visibly when cloudflared is missing', async () => {
   }
 })
 
-test('ON registers, reports uptime metadata, then OFF kills the child', async () => {
+test('ON registers, reports uptime metadata, then OFF kills the child', { skip: canSpawnFakeBinary ? false : SPAWN_SKIP_REASON }, async () => {
   const fixture = await makeFixture()
   const manager = new HeluxTunnelManager({ settings: fixture.settings() })
   try {
@@ -148,7 +148,7 @@ test('ON registers, reports uptime metadata, then OFF kills the child', async ()
   }
 })
 
-test('dispose kills a running child', async () => {
+test('dispose kills a running child', { skip: canSpawnFakeBinary ? false : SPAWN_SKIP_REASON }, async () => {
   const fixture = await makeFixture()
   const manager = new HeluxTunnelManager({ settings: fixture.settings() })
   try {
@@ -166,7 +166,7 @@ test('dispose kills a running child', async () => {
   }
 })
 
-test('an unexpected child exit surfaces as ERROR', async () => {
+test('an unexpected child exit surfaces as ERROR', { skip: canSpawnFakeBinary ? false : SPAWN_SKIP_REASON }, async () => {
   const fixture = await makeFixture()
   const manager = new HeluxTunnelManager({ settings: fixture.settings() })
   try {
@@ -188,7 +188,7 @@ test('an unexpected child exit surfaces as ERROR', async () => {
   }
 })
 
-test('an authentication failure line surfaces as ERROR and stops the child', async () => {
+test('an authentication failure line surfaces as ERROR and stops the child', { skip: canSpawnFakeBinary ? false : SPAWN_SKIP_REASON }, async () => {
   const fixture = await makeFixture()
   const manager = new HeluxTunnelManager({ settings: fixture.settings() })
   try {

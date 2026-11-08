@@ -3,6 +3,25 @@ import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+/**
+ * Whether the fake binary can be spawned on this platform.
+ *
+ * The fixture is a shebang script with no extension, which only POSIX can
+ * execute. Windows has no shebang support and `spawn` needs a real PE file, and
+ * the plugin deliberately refuses `.cmd`/`.bat` because Node cannot start a
+ * batch file without a shell. There is no way to build a genuine `.exe` from a
+ * test, so the tests that must actually launch the child process are skipped
+ * there rather than faked into passing.
+ *
+ * The Windows-specific logic they would exercise - binary resolution, PATH
+ * handling, and termination strategy - is pure and covered by
+ * platform.test.mjs on every platform.
+ */
+export const canSpawnFakeBinary = process.platform !== 'win32'
+
+/** Reason string for a skipped spawn test. */
+export const SPAWN_SKIP_REASON = 'the fake cloudflared is a shebang script, which Windows cannot execute'
+
 /** Fake `cloudflared` whose behavior is selected through FAKE_CLOUDFLARED_MODE. */
 const FAKE_CLOUDFLARED = `#!/usr/bin/env node
 const { writeFileSync } = require('node:fs')
