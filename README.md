@@ -106,8 +106,10 @@ The plugin **never** creates a tunnel, **never** uses a quick tunnel
    `~/.cloudflared` (or `cloudflaredHome`).
 4. The tunnel config must route **your** hostname to the local DSH Web UI.
 
-The plugin checks all four prerequisites before every start and shows every
-missing one in the panel. It installs nothing.
+The plugin checks all five prerequisites before every start and shows every
+missing one in the panel. It installs nothing. The fifth, **DSH host trust**,
+asks this DSH instance whether it accepts your public hostname on `/api`; see
+[Configuration](docs/CONFIGURATION.md) for why that matters.
 
 ## Install
 
@@ -414,8 +416,8 @@ generated code is scannable. Neither ships to the browser.
 ## Verification checklist
 
 1. Start DSH with the plugin installed: the panel shows **OFF**, the launch
-   button is disabled with its reason, and `pgrep -af cloudflared` shows no
-   tunnel process started by the plugin.
+   button is disabled with its reason, all five prerequisite items are green,
+   and `pgrep -af cloudflared` shows no tunnel process started by the plugin.
 2. Press **ON** with prerequisites met: status goes **CONNECTING**, then **ON**;
    `cloudflared tunnel run` is alive.
 3. Click **Copy launch URL** and paste it into a private/incognito window. It

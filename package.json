@@ -1,6 +1,6 @@
 {
   "name": "dsh-helux-tunnel",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "private": true,
   "type": "module",
   "description": "Sidebar control for the named Cloudflare Tunnel publishing the DSH Web UI at https://helux.web.id",
