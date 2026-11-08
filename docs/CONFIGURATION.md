@@ -70,8 +70,20 @@ keeps a mistyped value from turning your tunnel into a proxy for a third party.
 6. DSH trusts the public authority:
    `dsh web --trusted-host <hostname> --public-url https://<hostname>`.
 
-Step 6 is the one people miss. Without `--trusted-host`, the page loads but the
-`/api` calls are rejected and the UI stays disconnected.
+Step 6 is the one people miss. The failure mode is deceptive: DSH's index
+handler performs **no** trust check, so the page, the sidebar, and the chat
+shell all render normally, and only the `/api` routes are refused - which shows
+up the moment the UI tries to list folders or send a message:
+
+```
+client api: directoryPicker/list failed:
+transport failure for /api/directoryPicker/list: HTTP 403
+```
+
+The plugin now probes this. A **DSH host trust** preflight item appears next to
+the other four and turns red with the exact restart command when DSH would
+reject the hostname, so the mismatch is visible before the tunnel is turned ON.
+
 
 ## Strongly recommended: put Cloudflare Access in front
 

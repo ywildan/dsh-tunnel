@@ -1,4 +1,5 @@
 import { accessSync, constants as fsConstants, existsSync, readFileSync, statSync } from 'node:fs'
+import { request as httpRequest, type IncomingMessage } from 'node:http'
 import { createConnection } from 'node:net'
 import { homedir } from 'node:os'
 import { binDirectories, collapseHome, executableExtensions, pathDirectories } from './platform.js'
@@ -32,9 +33,12 @@ export interface TunnelConfig {
   ingress: IngressRule[]
 }
 
+/** How long the trust probe may take before it is reported as unverified. */
+const PROBE_TIMEOUT_MS = 4_000
+
 /** Result of one preflight check. */
 export interface PrerequisiteCheck {
-  id: 'cloudflared' | 'config' | 'credentials' | 'port'
+  id: 'cloudflared' | 'config' | 'credentials' | 'port' | 'trust'
   ok: boolean
   message: string
   hint?: string
@@ -440,6 +444,14 @@ export async function checkPrerequisites(settings: TunnelSettings): Promise<Prer
     })
   }
 
+  // DSH's /api fence accepts only loopback, its own bind address, or an
+  // authority named by --trusted-host. A tunneled browser sends the public
+  // hostname as Host, so without --trusted-host the page and the HTML still
+  // load while every /api call is refused with 403 - the tunnel looks ON and
+  // the chat renders, then fails the moment the UI calls an API.
+  const trust = await checkHostTrust(settings.localUrl, resolvedHostname)
+  checks.push(trust)
+
   return {
     ok: checks.every((check) => check.ok),
     checks,
@@ -447,5 +459,79 @@ export async function checkPrerequisites(settings: TunnelSettings): Promise<Prer
     ...(resolvedHostname.length > 0 ? { hostname: resolvedHostname } : {}),
     ...(binary !== undefined ? { binary } : {}),
     checkedAt: Date.now(),
+  }
+}
+
+/**
+ * Ask this DSH instance whether it accepts `hostname` on its /api fence.
+ *
+ * The probe is decisions a browser cannot fake: DSH answers 403 when the Host
+ * is not trusted and 401 when it is trusted but the request carries no
+ * credential. Nothing is sent but an empty RPC envelope, and the probe runs
+ * against loopback with only the Host header set, exactly like the tunneled
+ * request that would otherwise fail later.
+ *
+ * @param localUrl - loopback DSH Web UI origin.
+ * @param hostname - public hostname the tunnel publishes.
+ * @returns the trust check result.
+ */
+export async function checkHostTrust(localUrl: string, hostname: string, timeoutMs = PROBE_TIMEOUT_MS): Promise<PrerequisiteCheck> {
+  if (hostname.length === 0) {
+    return {
+      id: 'trust',
+      ok: false,
+      message: 'DSH trust could not be verified: no public hostname is configured.',
+      hint: 'Set `hostname` in the plugin config or add a matching ingress entry to config.yml.',
+    }
+  }
+
+  const target = new URL(localUrl)
+  let status: number
+  try {
+    status = await new Promise<number>((resolve, reject) => {
+      const request = httpRequest(
+        {
+          host: target.hostname,
+          port: target.port.length > 0 ? Number(target.port) : 80,
+          path: '/api/directoryPicker/list',
+          method: 'POST',
+          timeout: timeoutMs,
+          headers: { host: hostname, 'content-type': 'application/json' },
+        },
+        (response: IncomingMessage) => {
+          response.resume()
+          response.on('end', () => resolve(response.statusCode ?? 0))
+        },
+      )
+      request.on('timeout', () => {
+        request.destroy(new Error('probe timed out'))
+      })
+      request.on('error', reject)
+      request.end(JSON.stringify({ rpcId: 'helux-tunnel-trust-probe', payload: {} }))
+    })
+  } catch {
+    return {
+      id: 'trust',
+      ok: false,
+      message: 'DSH trust could not be verified.',
+      hint: `Ensure the DSH Web UI answers on ${localUrl}, then restart DSH with --trusted-host ${hostname}.`,
+    }
+  }
+
+  if (status === 403) {
+    return {
+      id: 'trust',
+      ok: false,
+      message: `DSH rejects ${hostname} on its /api routes (HTTP 403).`,
+      hint:
+        `Restart DSH Web with: dsh web --trusted-host ${hostname} --public-url https://${hostname}\n`
+        + 'Without it the page loads but every /api call is refused, so the chat cannot pick a folder or send a message.',
+    }
+  }
+
+  return {
+    id: 'trust',
+    ok: true,
+    message: `DSH accepts ${hostname} on its /api routes.`,
   }
 }

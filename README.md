@@ -405,6 +405,7 @@ generated code is scannable. Neither ships to the browser.
 | `Nothing is listening on 127.0.0.1:3080` | Start the DSH Web UI on port 3080 first. |
 | `cloudflared did not register … within 20 seconds` | Credentials/network problem; see the log lines in the panel. |
 | Page loads but stays disconnected | Restart DSH Web with `--trusted-host <host>`, then reopen the launch URL once. |
+| Chat renders, but picking a folder fails with `transport failure for /api/directoryPicker/list: HTTP 403` | Same cause: DSH's `/api` fence rejected the public Host. The HTML is served without a trust check, so the page looks fine while every API call is refused. Restart with `--trusted-host <host>`; the **DSH host trust** preflight item now reports this before you turn the tunnel ON. |
 | `Copy launch URL` is disabled | Hover the button or read the reason below it. OFF, a non-loopback page, a closed port 3080, or a DSH build without the Connection service all disable it. |
 | `Token not found - open the URL printed by dsh web in its terminal` | DSH did not expose a launch token. Copy the tokenized URL from the `dsh web` terminal instead; the plain **Copy URL** button still works. |
 | Launch URL copied but the page still says “authentication required” | The token is per DSH process and is bound to the authority. Make sure DSH runs with `--trusted-host <host>`, copy again after a DSH restart, and open the copied URL in a private window. |
