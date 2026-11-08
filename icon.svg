@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Helux Tunnel">
+  <defs>
+    <linearGradient id="helux-arch" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3b82f6"/>
+      <stop offset="1" stop-color="#14b8a6"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#0b1220"/>
+  <path d="M14 49V35a18 18 0 0 1 36 0v14" fill="none" stroke="url(#helux-arch)" stroke-width="4.5" stroke-linecap="round"/>
+  <path d="M25 49V37a7 7 0 0 1 14 0v12" fill="none" stroke="#7ce3c0" stroke-width="4" stroke-linecap="round"/>
+  <path d="M9 49h46" stroke="#94a3b8" stroke-width="3.5" stroke-linecap="round"/>
+  <circle cx="32" cy="45" r="2.6" fill="#7ce3c0"/>
+</svg>

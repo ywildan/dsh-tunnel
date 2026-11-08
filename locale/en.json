@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Helux Tunnel",
+    "description": "Left-sidebar ON/OFF control for the named Cloudflare Tunnel that publishes this DSH Web UI at https://helux.web.id. Off by default; never auto-starts."
+  }
+}

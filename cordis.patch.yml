@@ -1,0 +1,6 @@
+# dsh-helux-tunnel bundle patch.
+# Inserts one Host row; its `dsh.client` declaration loads the matching Client
+# module that registers the "Helux Tunnel" sidebar entry and main panel.
+- insert:
+    - id: helux-tunnel
+      name: dsh-helux-tunnel

@@ -1,0 +1,25 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "lib": [
+      "ES2020",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "jsx": "react",
+    "types": [
+      "react"
+    ],
+    "outDir": ".build/client",
+    "rootDir": "src/client",
+    "sourceMap": false
+  },
+  "include": [
+    "src/client/**/*.tsx",
+    "src/client/**/*.d.ts",
+    "src/client/**/*.ts"
+  ]
+}
